@@ -1,0 +1,21 @@
+`include "fifo_common.sv"
+`include "fifo_intf.sv"
+`include "async_fifo.v"
+`include "wr_tx.sv"
+`include "rd_tx.sv"
+`include "wr_gen.sv"
+`include "wr_drv.sv"
+`include "wr_mon.sv"
+`include "wr_cov.sv"
+`include "fifo_wr_agent.sv"
+`include "rd_gen.sv"
+`include "rd_drv.sv"
+`include "rd_mon.sv"
+`include "rd_cov.sv"
+`include "fifo_rd_agent.sv"
+`include "fifo_scoreboard.sv"
+`include "fifo_env.sv"
+`include "top.sv"
+
+ 
+
