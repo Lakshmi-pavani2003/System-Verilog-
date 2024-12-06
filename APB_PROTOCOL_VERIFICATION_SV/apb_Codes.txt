@@ -1,0 +1,591 @@
+// apb_design_file in Verilog :
+/*
+/*
+/////////////////////////////////////////
+
+// --> AMBA 3 APB 
+
+// --> The AMBA 3 APB Protocol Specification v1.0 defines the following additional functionality:
+  Wait states
+  Error reporting
+
+// --> The following interface signals support this functionality:
+ 
+// --> PREADY : A ready signal to indicate completion of an APB transfer.
+// --> PSLVERR : An error signal to indicate the failure of a transfer.
+ 
+// --> This version of the specification is referred to as APB3.
+
+////////////////////////////////////////
+*/
+
+parameter WIDTH = 8;
+parameter MEM_DEPTH = 16; 
+parameter ADDR_WIDTH = $clog2(MEM_DEPTH);
+
+module apb(input wire pclk_i,                		// Clock
+			input wire presetn_i,             		// Active low reset
+    		input wire psel_i,                		// Peripheral select
+    		input wire penable_i,             		// Enable signal
+    		input wire pwrite_i,              		// Write control
+    		input wire [ADDR_WIDTH-1:0] paddr_i,    // Address bus
+    		input wire [WIDTH-1:0] pwdata_i,        // Write data
+    		output reg [WIDTH-1:0] prdata_o,        // Read data
+    		output reg pready_o,              		// Ready signal
+    		output reg pslverr_o              		// Slave error
+          );
+
+// Define memory and parameters
+    parameter IDLE = 2'b00, SETUP = 2'b01, ACCESS = 2'b10, TRANSFER = 2'b11;
+	
+	reg [ADDR_WIDTH:0]write_count=0;
+	wire full = (write_count >= MEM_DEPTH); // memory full flag
+	wire empty = (write_count==0); // memory empty flag
+    reg [WIDTH-1:0] mem [MEM_DEPTH-1:0];   // 32 locations of 32-bit memory
+    reg [1:0] state;                  // 2-bit state register
+
+    integer i;
+
+// Asynchronous reset and clock-triggered logic
+
+    always @(posedge pclk_i or negedge presetn_i) begin
+        if (!presetn_i) begin
+            state <= IDLE;
+            prdata_o <= 8'b0;
+            pready_o <= 1'b0;
+            pslverr_o <= 1'b0;
+            for (i = 0; i < MEM_DEPTH; i = i + 1) begin
+                mem[i] <= 8'b0;
+			end
+        end 
+		else begin
+            case (state)
+			
+                IDLE: begin
+                    prdata_o <= 8'b0;
+                    pready_o <= 1'b0;
+                    pslverr_o <= 1'b0;
+                    if (psel_i && penable_i)
+                        state <= SETUP;
+                end
+
+                SETUP: begin
+                    if (psel_i && penable_i) begin
+                        if (paddr_i < MEM_DEPTH) begin
+                            pready_o <= 1'b1;
+                            state <= ACCESS;
+                        end 
+						else begin
+                            pready_o <= 1'b0;
+                            pslverr_o <= 1'b1;
+                            state <= TRANSFER;  // Go to transfer even on invalid address
+                        end
+                    end
+                end
+
+                ACCESS: begin
+                    if (penable_i && psel_i) begin
+                        if (pwrite_i) begin  // Write operation
+							if(!full) begin
+//                            if (paddr_i < MEM_DEPTH) begin
+                                mem[paddr_i] <= pwdata_i;
+								write_count <= write_count+1;
+                                pslverr_o <= 1'b0;
+                            end 
+							else begin
+                                pslverr_o <= 1'b1;
+                            end
+                        end 
+						else begin  // Read operation
+                            if (!empty) begin
+                                prdata_o <= mem[paddr_i][7:0];  // Only returning 8-bits
+								write_count <= write_count-1;
+                                pslverr_o <= 1'b0;
+                            end 
+							else begin
+                                prdata_o <= 8'hXX;  // Unknown for invalid address
+                                pslverr_o <= 1'b1;
+                            end
+                        end
+                        pready_o <= 1'b1;
+                        state <= TRANSFER;
+                    end
+                end
+
+                TRANSFER: begin
+                    pready_o <= 1'b0;
+                    pslverr_o <= 1'b0;
+                    state <= IDLE;  // Return to IDLE for next operation
+                end
+
+                default: state <= IDLE;
+
+            endcase
+        end
+    end
+
+endmodule
+*/
+
+// apb_test_bench in sv :
+
+// tb :
+/*
+`define WIDTH 8
+`define ADDR_WIDTH $clog2(MEM_DEPTH)
+`define MEM_DEPTH 16
+
+typedef class apb_env;
+typedef class apb_agent;
+typedef class apb_gen;
+typedef class apb_bfm;
+typedef class apb_mon;
+typedef class apb_cov;
+typedef class apb_tx;
+
+`include "apb_if.sv"
+`include "apb_tx.sv"
+`include "apb_mon.sv"
+`include "apb_cov.sv"
+`include "apb_bfm.sv"
+`include "apb_gen.sv"
+`include "apb_agent.sv"
+`include "apb_env.sv"
+`include "apb.v"
+
+module apb_tb;
+
+	bit pclk_i,presetn_i;
+	apb_env env;
+
+	apb_if pif(pclk_i,presetn_i);
+
+	apb dut(.pclk_i(pif.pclk_i),
+			.presetn_i(pif.presetn_i),
+			.psel_i(pif.psel_i),
+			.penable_i(pif.penable_i),
+			.pwrite_i(pif.pwrite_i),
+			.paddr_i(pif.paddr_i),
+			.pwdata_i(pif.pwdata_i),
+			.prdata_o(pif.prdata_o),
+			.pready_o(pif.pready_o),
+			.pslverr_o(pif.pslverr_o)
+	);
+
+	initial begin 
+		presetn_i=0;
+		pclk_i=0;
+		repeat(2) @(posedge pclk_i);
+		presetn_i=1;
+	end
+
+	initial begin
+		assert($value$plusargs("testname=%s",apb_gen::test_name));
+		env=new();
+		env.run();
+	end
+	
+	always #5 pclk_i=~pclk_i;
+
+	initial begin
+		#2000;
+		$finish();
+	end
+
+endmodule
+*/
+
+// apb_env :
+/*
+class apb_env;
+	
+	apb_agent agent;
+
+	function new();
+		agent=new();
+	endfunction
+
+	task run();
+		agent.run();
+	endtask
+
+endclass
+*/
+
+// apb_agent :
+/*
+mailbox gen2bfm=new();
+mailbox mon2cov=new();
+
+class apb_agent;
+
+	apb_gen gen;
+	apb_bfm bfm;
+	apb_mon mon;
+	apb_cov cov;
+
+	function new();
+		gen=new();
+		bfm=new();
+		mon=new();
+		cov=new();
+	endfunction
+
+	task run();
+		fork
+			gen.run();
+			bfm.run();
+			mon.run();
+			cov.run();
+		join
+	endtask
+
+endclass
+*/ 
+
+// apb_gen :
+/*
+class apb_gen;
+
+	apb_tx tx,tx_p;
+
+	static string test_name="apb_base_test";
+
+	task run();
+		case(test_name)
+
+			"apb_base_test" : begin
+// write_operation and testing slave error feature 
+				repeat(20) begin
+					tx=new();
+					assert(tx.randomize() with{tx.psel_i==1'b1;tx.penable_i==1'b0;tx.pwrite_i==1'b1;});
+					tx_p=new tx;
+					gen2bfm.put(tx);
+					tx.print("printing write transaction from generator : ");
+// read_operation and testing slave error feature 
+					tx=new();
+					assert(tx.randomize() with{tx_p.paddr_i==tx.paddr_i;tx.psel_i==1'b1;tx.penable_i==1'b1;tx.pwrite_i==1'b0;});
+					gen2bfm.put(tx);
+					tx.print("printing read transaction from generator : ");
+				end
+			end
+
+			"apb_overflow":begin
+			    repeat(20) begin
+				    tx = new();
+					assert(tx.randomize() with{tx.psel_i==1'b1;tx.penable_i==1'b0;tx.pwrite_i==1'b1;});
+					gen2bfm.put(tx);
+					tx.print("printing Write transaction with overflow");	
+				end
+			end
+			
+			"apb_underflow":begin
+			    repeat(20) begin
+				    tx = new();
+					assert(tx.randomize() with{tx.psel_i==1'b1;tx.penable_i==1'b0;tx.pwrite_i==1'b0;});
+					gen2bfm.put(tx);
+					tx.print("printing Read transaction with Underflow");	
+				end
+			end
+
+			"apb_invalid_address" : begin
+				repeat(20)begin
+				    tx = new();
+					assert(tx.randomize() with {tx.psel_i == 1'b1; tx.penable_i == 1'b0; tx.pwrite_i == 1'b1; tx.paddr_i >= `MEM_DEPTH; });
+					gen2bfm.put(tx);
+					tx.print("Invalied Address case from generator");
+				end
+			end
+			
+		endcase
+	endtask
+
+endclass
+*/
+
+// apb_bfm :
+/*
+class apb_bfm;
+
+	apb_tx tx;
+	virtual apb_if vif;
+
+	function new();
+		vif=apb_tb.pif;
+	endfunction
+
+	task run();
+		forever begin
+			gen2bfm.get(tx);
+			drive_tx(tx);
+			tx.print("printing drive transaction from bfm");
+			#1;
+		end
+	endtask
+
+	task drive_tx(apb_tx tx);
+// Setup phase
+    	@(vif.cb_bfm);
+    	vif.cb_bfm.psel_i    <= 1'b1;       
+    	vif.cb_bfm.penable_i <= 1'b0;       
+    	vif.cb_bfm.paddr_i   <= tx.paddr_i; 
+    	vif.cb_bfm.pwrite_i  <= tx.pwrite_i;
+    	if (tx.pwrite_i) begin
+// Write operation
+        	vif.cb_bfm.pwdata_i <= tx.pwdata_i;  
+		end
+		else begin
+// read operation
+			tx.prdata_o <= vif.cb_bfm.prdata_o;
+		end
+// Enable phase
+    	@(vif.cb_bfm);
+    	vif.cb_bfm.penable_i <= 1'b1;  
+		wait(vif.cb_bfm.pready_o == 1'b1); 
+// Return to idle
+    	@(vif.cb_bfm);
+    	vif.cb_bfm.psel_i    <= 1'b0;  
+    	vif.cb_bfm.penable_i <= 1'b0;  
+	endtask
+	
+endclass
+*/
+
+// apb_mon :
+/*
+class apb_mon;
+	
+	apb_tx tx;
+	virtual apb_if vif;
+
+	function new();
+		vif=apb_tb.pif;
+	endfunction 
+
+	task run();
+		forever begin
+			@(vif.cb_mon);
+			tx=new();
+			if(vif.cb_mon.psel_i==1'b1 && vif.cb_mon.penable_i==1'b1) begin
+				tx.pwrite_i=vif.cb_mon.pwrite_i;
+				if(tx.pwrite_i) begin
+					tx.pwdata_i=vif.cb_mon.pwdata_i;
+					tx.pready_o=vif.cb_mon.pready_o;
+					tx.pslverr_o=vif.cb_mon.pslverr_o;
+				end
+				else begin
+					tx.prdata_o=vif.cb_mon.prdata_o;
+					tx.pready_o=vif.cb_mon.pready_o;
+					tx.pslverr_o=vif.cb_mon.pslverr_o;
+				end
+			end
+			mon2cov.put(tx);
+			#1;
+			tx.print("printing from monitor : ");
+		end
+	endtask
+
+endclass
+*/
+
+// apb_cov :
+
+/*
+class apb_cov;
+	
+	apb_tx tx;
+	event g1;
+
+	covergroup apb_cg@(g1);
+		
+		PSEL_I : coverpoint tx.psel_i{
+//			bins psel_bins[] = {[0:1]}; // implicit bins 
+			option.auto_bin_max=2;      // explicit bins
+			option.at_least=0;
+		}
+
+		PENABLE_I : coverpoint tx.penable_i{
+//			bins penable_bins[] = {[0:1]}; // implicit bins
+			option.auto_bin_max=2;         // explicit bins
+			option.at_least=0;
+		}
+
+		PWRITE_I : coverpoint tx.pwrite_i{
+			bins pwrite_bins[] = {[0:1]}; // implicit bins 
+			option.at_least=0;
+		}
+
+		PADDR_I : coverpoint tx.paddr_i{
+//			bins paddr_bins[] = {[0:31]}; // implicit bins 
+			option.auto_bin_max=2;  // explicit bins
+		}
+
+		PWDATA_I : coverpoint tx.pwdata_i{ 
+			option.auto_bin_max=3;  // explicit bins
+		}
+
+		PRDATA_O : coverpoint tx.prdata_o{ 
+			option.auto_bin_max=3;  // explicit bins
+		}
+
+		PREADY_O : coverpoint tx.pready_o{
+			bins pready_bins[] = {[0:1]}; // implicit bins 
+			option.at_least=2;
+		}
+
+		PSLVERR_O : coverpoint tx.pslverr_o{
+			bins pslverr_bins[] = {[0:1]}; // implicit bins
+			option.at_least=2;
+		}
+
+	endgroup
+
+	function new();
+		apb_cg=new();
+	endfunction
+
+	task run();
+		forever begin
+			mon2cov.get(tx);
+			tx.print("printing from coverage: ");
+			apb_cg.sample();
+			->g1;
+		end
+	endtask
+	
+endclass
+*/
+
+// apb_if :
+
+/*
+interface apb_if(input bit pclk_i,presetn_i);
+
+	bit psel_i;
+	bit penable_i;
+	bit pwrite_i;
+	bit [`ADDR_WIDTH-1:0]paddr_i;
+	bit [`WIDTH-1:0]pwdata_i;
+	bit [`WIDTH-1:0]prdata_o;
+	bit pready_o;
+	bit pslverr_o;
+
+// clocking block for the bfm 
+
+	clocking cb_bfm @(posedge pclk_i);
+		
+		default input #1 output #0;
+
+		output psel_i;
+		output penable_i;
+		output pwrite_i;
+		output paddr_i;
+		output pwdata_i;
+		input  prdata_o;
+		input  pready_o;
+		input  pslverr_o;
+	
+	endclocking
+
+	clocking cb_mon @(posedge pclk_i);
+	
+		default input #0;
+
+		input  psel_i;
+		input  penable_i;
+		input  pwrite_i;
+		input  paddr_i;
+		input  pwdata_i;
+		input  prdata_o;
+		input  pready_o;
+		input  pslverr_o;
+
+	endclocking
+
+	modport mp_bfm(clocking cb_bfm);
+
+	modport mp_mon(clocking cb_mon);
+
+endinterface
+*/
+
+// apb_tx :
+/*
+class apb_tx;
+	
+	rand bit psel_i;
+	rand bit penable_i;
+	rand bit pwrite_i;
+	rand bit [`ADDR_WIDTH-1:0]paddr_i;
+	rand bit [`WIDTH-1:0]pwdata_i;
+		 bit [`WIDTH-1:0]prdata_o;
+		 bit pready_o;
+		 bit pslverr_o;
+
+	constraint paddr_i_c{
+		paddr_i dist {[0:4]:=3,[5:10]:=5,[11:15]:=7};
+//		foreach(paddr_i[i]){
+//			paddr_i[i] inside {[0:15]};
+//		}
+	}
+
+	function void print(string name);
+		$display("printing from %s : ",name);
+//		$display("printing ",pwrite_i?"write transaction : ":"read transaction : ");
+		$display("\n psel_i : %b",psel_i);
+		$display("\n penable_i : %b",penable_i);
+		$display("\n pwrite_i : %b",pwrite_i);
+		$display("\n paddr_i : %0h",paddr_i);
+		$display("\n pwdata_i : %0h",pwdata_i);
+		$display("\n prdata_o : %0h",prdata_o);
+		$display("\n pready_o : %b",pready_o);
+		$display("\n pslv_err_o : %b\n",pslverr_o);
+	endfunction
+
+endclass
+*/
+
+// run.do file without regression :
+
+/*
+vlog apb_tb.sv
+vopt apb_tb +cover=fcbest -o apb_base_test
+vsim -coverage apb_base_test -novopt -suppress 12110 
+coverage save -onexit apb_base_test.ucdb
+add wave -position insertpoint sim:/apb_tb/dut/*
+run -all
+*/
+
+// run_regr.do with regression :
+/*
+# compilation 
+vlog apb_tb.sv
+
+# optimization
+vopt apb_tb +cover=fcbest -o apb_base_test
+
+# open test list file 
+set fp [open "testname_list.txt" r]
+
+# loop through test list
+while {[gets $fp testname] >= 0} {
+	# run simulation and coverage for each testname
+	vsim -coverage apb_base_test +testname=$testname -novopt -suppress 12110
+	do exclusion.do
+
+	# run the simulation to completion 
+	run -all
+
+}
+
+# close the testname_list file
+close $fp
+*/
+
+// testname_list file :
+/*
+apb_base_test
+apb_overflow
+apb_underflow
+apb_invalid_address
+*/
